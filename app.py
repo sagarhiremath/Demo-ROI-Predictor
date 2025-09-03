@@ -15,12 +15,34 @@ def load_model():
     """Load the pre-trained scikit-learn model"""
     try:
         if os.path.exists('campaign_model.joblib'):
-            model = joblib.load('campaign_model.joblib')
-            return model, None
+            # Load model with explicit protocol and error handling for version compatibility
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                model = joblib.load('campaign_model.joblib')
+            
+            # Test the model with a sample prediction to ensure compatibility
+            test_data = pd.DataFrame({
+                'Campaign_Type': ['Social Media'],
+                'Audience': ['New Customers'],
+                'Cost': [1000.0],
+                'Avg_Order_Value': [75.0]
+            })
+            
+            try:
+                # Try a test prediction
+                test_prediction = model.predict(test_data)
+                return model, None
+            except Exception as pred_error:
+                return None, f"Model compatibility error: {str(pred_error)}. The model may have been trained with an incompatible version of scikit-learn. Please retrain the model with the current environment."
+            
         else:
             return None, "Model file 'campaign_model.joblib' not found. Please ensure the model file is uploaded to the application directory."
     except Exception as e:
-        return None, f"Error loading model: {str(e)}"
+        error_msg = str(e)
+        if "incompatible dtype" in error_msg or "node array" in error_msg:
+            return None, "Model version incompatibility detected. The model was created with a different version of scikit-learn and cannot be loaded. Please retrain the model with the current environment."
+        return None, f"Error loading model: {error_msg}"
 
 def get_roi_category_and_recommendation(roi: float) -> Tuple[str, str, str]:
     """Categorize ROI and provide recommendations"""
@@ -38,6 +60,35 @@ def get_roi_category_and_recommendation(roi: float) -> Tuple[str, str, str]:
         recommendation = "Change target audience or optimize creative."
     
     return category, color, recommendation
+
+def make_demo_prediction(campaign_type: str, audience: str, cost: float, avg_order_value: float) -> float:
+    """Generate a realistic demo prediction based on campaign parameters"""
+    # Base revenue multipliers for different campaign types
+    type_multipliers = {
+        'Social Media': 0.8,
+        'Email': 1.2,
+        'Search': 1.5,
+        'Display': 0.6,
+        'Referral': 1.1
+    }
+    
+    # Audience effectiveness multipliers
+    audience_multipliers = {
+        'New Customers': 0.7,
+        'Existing Customers': 1.3,
+        'Lookalike': 0.9,
+        'High Value': 1.6,
+        'All': 1.0
+    }
+    
+    # Calculate base prediction
+    base_revenue = cost * type_multipliers.get(campaign_type, 1.0) * audience_multipliers.get(audience, 1.0)
+    
+    # Add some variability and adjust for order value
+    order_value_factor = min(avg_order_value / 75.0, 2.0)  # Normalize around $75
+    predicted_revenue = base_revenue * order_value_factor * (0.8 + (cost % 100) / 500)  # Add pseudo-randomness
+    
+    return max(predicted_revenue, cost * 0.2)  # Ensure minimum 20% of cost
 
 def create_genai_prompt(campaign_data: Dict) -> str:
     """Generate a sample GenAI prompt for campaign optimization"""
@@ -60,12 +111,14 @@ def main():
     # Load model
     model, error_message = load_model()
     
+    demo_mode = False
     if error_message:
         st.error(error_message)
-        st.info("Please upload the 'campaign_model.joblib' file to use this application.")
-        return
-    
-    st.success("✅ Model loaded successfully!")
+        st.warning("⚠️ Running in Demo Mode - Using simulated predictions for demonstration purposes.")
+        st.info("Upload a compatible 'campaign_model.joblib' file to use real predictions.")
+        demo_mode = True
+    else:
+        st.success("✅ Model loaded successfully!")
     
     # Create two columns for better layout
     col1, col2 = st.columns([1, 1])
@@ -126,16 +179,21 @@ def main():
                 return
             
             try:
-                # Prepare data for prediction
-                input_data = pd.DataFrame({
-                    'Campaign_Type': [campaign_type],
-                    'Audience': [audience],
-                    'Cost': [cost],
-                    'Avg_Order_Value': [avg_order_value]
-                })
-                
-                # Make prediction
-                predicted_revenue = model.predict(input_data)[0]
+                # Make prediction based on mode
+                if demo_mode:
+                    # Use demo prediction
+                    predicted_revenue = make_demo_prediction(campaign_type, audience, cost, avg_order_value)
+                else:
+                    # Prepare data for real model prediction
+                    input_data = pd.DataFrame({
+                        'Campaign_Type': [campaign_type],
+                        'Audience': [audience],
+                        'Cost': [cost],
+                        'Avg_Order_Value': [avg_order_value]
+                    })
+                    
+                    # Make real prediction
+                    predicted_revenue = model.predict(input_data)[0]
                 
                 # Calculate metrics
                 estimated_conversions = predicted_revenue / avg_order_value if avg_order_value > 0 else 0
@@ -148,10 +206,11 @@ def main():
                 metric_col1, metric_col2 = st.columns(2)
                 
                 with metric_col1:
+                    revenue_label = "💰 Predicted Revenue" + (" (Demo)" if demo_mode else "")
                     st.metric(
-                        label="💰 Predicted Revenue",
+                        label=revenue_label,
                         value=f"${predicted_revenue:,.2f}",
-                        help="Expected revenue from this campaign"
+                        help="Expected revenue from this campaign" + (" - Demo prediction for illustration" if demo_mode else "")
                     )
                 
                 with metric_col2:
