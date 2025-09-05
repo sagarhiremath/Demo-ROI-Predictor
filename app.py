@@ -296,7 +296,7 @@ def main():
     st.markdown(
         """
         <div style='text-align: center; color: #666;'>
-            <small>Marketing Campaign ROI Predictor | Powered by Streamlit & scikit-learn</small>
+            <small>Marketing Campaign ROI Predictor</small>
         </div>
         """,
         unsafe_allow_html=True
